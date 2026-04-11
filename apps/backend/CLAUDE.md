@@ -4,18 +4,18 @@ REST API deployed to Cloudflare Workers using Hono.js, Drizzle ORM, Neon Postgre
 
 ## Stack
 
-| Layer         | Technology                               |
-| ------------- | ---------------------------------------- |
-| Runtime       | Cloudflare Workers (edge)                |
-| Framework     | Hono.js                                  |
-| Database      | Neon PostgreSQL (serverless HTTP driver) |
-| ORM           | Drizzle ORM                              |
-| Validation    | Zod v4                                   |
-| Cache         | In-memory API cache at the service layer |
+| Layer         | Technology                                                          |
+| ------------- | ------------------------------------------------------------------- |
+| Runtime       | Cloudflare Workers (edge)                                           |
+| Framework     | Hono.js                                                             |
+| Database      | Neon PostgreSQL (serverless HTTP driver)                            |
+| ORM           | Drizzle ORM                                                         |
+| Validation    | Zod v4                                                              |
+| Cache         | In-memory API cache at the service layer                            |
 | Password hash | Web Crypto API — PBKDF2, SHA-256, 100k iterations, no external deps |
-| Docs          | `@hono/zod-openapi` + `@hono/swagger-ui` |
-| Local dev     | Wrangler + Miniflare                     |
-| Testing       | Vitest + Miniflare E2E                   |
+| Docs          | `@hono/zod-openapi` + `@hono/swagger-ui`                            |
+| Local dev     | Wrangler + Miniflare                                                |
+| Testing       | Vitest + Miniflare E2E                                              |
 
 ## Project Structure
 
@@ -48,6 +48,13 @@ pnpm db:generate  # drizzle-kit generate — create migration from schema change
 pnpm db:migrate   # drizzle-kit migrate — apply pending migrations
 pnpm deploy       # wrangler deploy — deploy to Cloudflare Workers
 ```
+
+After `pnpm dev`, the API docs are available at:
+
+| URL | Description |
+| --- | --- |
+| `http://localhost:8787/api/docs` | Swagger UI |
+| `http://localhost:8787/api/docs/spec` | OpenAPI 3.1 JSON spec |
 
 ## REST API Conventions
 
