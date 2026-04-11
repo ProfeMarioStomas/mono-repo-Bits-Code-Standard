@@ -129,7 +129,12 @@ Request → 401 received
 ### Forms (TanStack Form + Zod v4)
 
 - All form validation via Zod schemas defined in `src/models/`
-- Use `@tanstack/zod-form-adapter` for integration
+- Pass the Zod schema directly via Standard Schema — no adapter package needed:
+  ```typescript
+  const form = useForm({
+    validators: { onSubmit: z.object({ email: z.email() }) },
+  });
+  ```
 - Never manage form state manually with `useState` — TanStack Form handles it
 - Submit handler calls the service function, then triggers TanStack Query mutation
 
@@ -211,6 +216,12 @@ Usage rules:
 - TanStack Query `error` state for async errors — display in UI, not console
 - Form errors via TanStack Form field validation — display inline
 - Network/auth errors handled globally in Axios interceptor (e.g., redirect on 401)
+
+## UI/UX Design
+
+Always invoke the `ui-ux-pro-max` skill before implementing any new UI component, page, or layout.
+This skill provides design guidance, color palettes, typography, spacing, and component patterns
+tailored to the product type and stack.
 
 ## Testing
 
