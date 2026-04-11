@@ -4,16 +4,18 @@ REST API deployed to Cloudflare Workers using Hono.js, Drizzle ORM, Neon Postgre
 
 ## Stack
 
-| Layer       | Technology                               |
-| ----------- | ---------------------------------------- |
-| Runtime     | Cloudflare Workers (edge)                |
-| Framework   | Hono.js                                  |
-| Database    | Neon PostgreSQL (serverless HTTP driver) |
-| ORM         | Drizzle ORM                              |
-| Validation  | Zod v4                                   |
-| Cache       | In-memory API cache at the service layer |
-| Local dev   | Wrangler + Miniflare                     |
-| Testing     | Vitest + Miniflare E2E                   |
+| Layer         | Technology                               |
+| ------------- | ---------------------------------------- |
+| Runtime       | Cloudflare Workers (edge)                |
+| Framework     | Hono.js                                  |
+| Database      | Neon PostgreSQL (serverless HTTP driver) |
+| ORM           | Drizzle ORM                              |
+| Validation    | Zod v4                                   |
+| Cache         | In-memory API cache at the service layer |
+| Password hash | Web Crypto API — PBKDF2, SHA-256, 100k iterations, no external deps |
+| Docs          | `@hono/zod-openapi` + `@hono/swagger-ui` |
+| Local dev     | Wrangler + Miniflare                     |
+| Testing       | Vitest + Miniflare E2E                   |
 
 ## Project Structure
 
@@ -111,23 +113,105 @@ Zod v4 breaking changes — always use the new API:
 
 ```typescript
 // ❌ Zod 3 (OLD — do not use)
-z.string().email()
-z.string().uuid()
-z.string().url()
-z.string().nonempty()
-z.object({ name: z.string() }).required_error("Required")
+z.string().email();
+z.string().uuid();
+z.string().url();
+z.string().nonempty();
+z.object({ name: z.string() }).required_error("Required");
 
 // ✅ Zod 4 (NEW — always use this)
-z.email()
-z.uuid()
-z.url()
-z.string().min(1)
-z.object({ name: z.string() }, { error: "Required" })
+z.email();
+z.uuid();
+z.url();
+z.string().min(1);
+z.object({ name: z.string() }, { error: "Required" });
 ```
 
 - Use `z.infer<typeof Schema>` for TypeScript types — never define types separately
 - Validate at the controller level — never trust raw request body in services or repositories
 - Error messages use `{ error: "..." }` not `{ message: "..." }`
+
+### Password Hashing
+
+Passwords are hashed using the **Web Crypto API** (PBKDF2) — no Node.js `crypto`, no external libraries.
+This is required because Cloudflare Workers does not support Node.js built-ins.
+
+- Implementation: `src/lib/password.ts`
+- Algorithm: PBKDF2, SHA-256, 100,000 iterations, 256-bit output
+- Stored format: `"{saltBase64}:{hashBase64}"`
+- Always use constant-time comparison (`verifyPassword`) — never compare hashes with `===`
+- Never log, return, or expose the stored hash
+
+### OpenAPI / Swagger Documentation
+
+Every endpoint and every schema **must** be documented with OpenAPI. Use the official Hono packages:
+
+```bash
+pnpm add @hono/zod-openapi @hono/swagger-ui
+```
+
+#### Router setup
+
+Replace `new Hono<AppContext>()` with `new OpenAPIHono<AppContext>()` in every controller:
+
+```typescript
+import { OpenAPIHono } from "@hono/zod-openapi";
+
+export const usersRouter = new OpenAPIHono<AppContext>();
+```
+
+#### Route definition
+
+Use `createRoute` to define each endpoint with its request/response schemas:
+
+```typescript
+import { createRoute, z } from "@hono/zod-openapi";
+
+const getUser = createRoute({
+  method: "get",
+  path: "/{id}",
+  tags: ["Users"],
+  summary: "Get a user by ID",
+  request: {
+    params: z.object({ id: z.uuid() }),
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: UserResponseSchema } },
+      description: "User found",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "User not found",
+    },
+  },
+});
+
+usersRouter.openapi(getUser, async (c) => { ... });
+```
+
+#### Swagger UI endpoint
+
+Register the spec and the UI in `src/index.ts`:
+
+```typescript
+import { swaggerUI } from "@hono/swagger-ui";
+
+app.doc("/api/docs/spec", {
+  openapi: "3.1.0",
+  info: { title: "StockFlow API", version: "1.0.0" },
+});
+
+app.get("/api/docs", swaggerUI({ url: "/api/docs/spec" }));
+```
+
+#### Rules
+
+- Every `createRoute` must declare **all possible response codes** (200/201/204/400/404/409/422/500 as applicable)
+- Request body, path params, and query params are all validated via Zod schemas in `createRoute` — do NOT duplicate `safeParse` calls
+- Schemas in `models/` are reused directly — never define inline schemas in route definitions
+- Tags group routes by resource: `["Users"]`, `["Products"]`, `["Sales"]`, etc.
+- Summary is a short imperative phrase: `"List all users"`, `"Create a product"`
 
 ### API Cache (service layer)
 
@@ -157,15 +241,16 @@ z.object({ name: z.string() }, { error: "Required" })
 
 All logs must be structured JSON. Every line must include:
 
-| Field           | Example                          |
-| --------------- | -------------------------------- |
-| `timestamp`     | `"2024-01-15T10:30:00.123Z"`     |
-| `level`         | `"info"`                         |
-| `service`       | `"api"`                          |
-| `correlationId` | UUID from `X-Correlation-Id`     |
-| `message`       | Human-readable description       |
+| Field           | Example                      |
+| --------------- | ---------------------------- |
+| `timestamp`     | `"2024-01-15T10:30:00.123Z"` |
+| `level`         | `"info"`                     |
+| `service`       | `"api"`                      |
+| `correlationId` | UUID from `X-Correlation-Id` |
+| `message`       | Human-readable description   |
 
 Log level rules:
+
 - `DEBUG` — dev tracing only, never enabled in production by default
 - `INFO` — normal business events (order created, user logged in)
 - `WARN` — recoverable issues, and **ALL 4xx client errors** (400, 404 → INFO/DEBUG, 422 → WARN)
