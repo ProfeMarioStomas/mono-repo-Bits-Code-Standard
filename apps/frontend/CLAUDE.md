@@ -139,6 +139,83 @@ Request → 401 received
 - Never manage form state manually with `useState` — TanStack Form handles it
 - Submit handler calls the service function, then triggers TanStack Query mutation
 
+#### Numeric fields — coercion before API call (REQUIRED)
+
+TanStack Form's `onSubmit` receives the **raw form state**, not the Zod-parsed output.
+HTML `<input type="number">` always returns a **string** (e.g. `"19.99"`), even when
+the field type is declared as `number`. The `z.coerce.number()` in the schema coerces
+the value during validation so no field error is shown, but the raw string is what gets
+passed to `onSubmit` — and then sent to the backend, where `z.number()` (no coerce)
+fails with `"Price must be a number"`.
+
+**Always parse through the Zod schema inside `onSubmit` before calling the service:**
+
+```typescript
+onSubmit: async ({ value }) => {
+  // value.price is "19.99" (string) — coerce it before sending
+  const coerced = mySchema.parse(value);
+  await myService.create(coerced); // ✅ price is now 19.99 (number)
+},
+```
+
+#### Optional numeric fields — empty input must map to `undefined`
+
+`z.coerce.number()` converts `""` to `0`. If the field also has `.positive()`, this
+causes a validation error when the user leaves the field empty. Fix it in two places:
+
+1. **`defaultValues`**: use `undefined`, not `""`
+   ```typescript
+   defaultValues: {
+     costPrice: undefined as number | undefined,
+   }
+   ```
+
+2. **`onChange`**: convert empty string to `undefined`
+   ```typescript
+   onChange={(e) =>
+     field.handleChange(
+       e.target.value === "" ? undefined : (e.target.value as unknown as number),
+     )
+   }
+   ```
+
+#### Server error display — always show `details[]`
+
+The standard error shape is `{ error: { code, message, details[] } }`. Never display
+only `error.message` — always render `error.details` as a list so the user knows which
+fields failed:
+
+```typescript
+// State type
+type ServerError = {
+  message: string;
+  details?: { field: string; message: string }[];
+};
+
+// In catch block
+const error = axiosError.response?.data?.error;
+setServerError({
+  message: error?.message ?? "An unexpected error occurred.",
+  details: error?.details?.length ? error.details : undefined,
+});
+```
+
+```tsx
+{/* In JSX */}
+{serverError && (
+  <div role="alert" className="...">
+    <p>{serverError.message}</p>
+    {serverError.details && (
+      <ul className="mt-1 list-inside list-disc">
+        {serverError.details.map((d, i) => (
+          <li key={i}><span className="font-medium">{d.field}</span>: {d.message}</li>
+        ))}
+      </ul>
+    )}
+  </div>
+)}
+```
+
 ### Zod v4 Schemas (models/)
 
 Zod v4 breaking changes — always use the new API:
