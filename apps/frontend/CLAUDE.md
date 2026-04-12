@@ -220,6 +220,27 @@ Usage rules:
 - Every CRUD feature follows this pattern: page renders the table + action buttons → button opens a modal → modal contains the TanStack Form → on submit, modal closes and the query is invalidated
 - Delete actions use a confirmation modal (never a browser `confirm()` or inline action without confirmation)
 
+### Edit modal preloading — REQUIRED pattern
+
+Edit modals **must** always receive the entity as a prop and use its fields in `defaultValues`. The parent **must** set `key={entity.id}` on the modal component:
+
+```tsx
+// ✅ CORRECT — key forces a fresh mount per entity, so useForm always
+// initializes with the right defaultValues. Never use useEffect + form.reset()
+// to sync values; that causes a flash of empty fields.
+{modal?.type === "edit" && (
+  <EditFooModal key={modal.foo.id} foo={modal.foo} open onClose={...} />
+)}
+
+// ❌ WRONG — no key means React may reuse the component instance when
+// switching between entities, leaving stale form values.
+{modal?.type === "edit" && (
+  <EditFooModal foo={modal.foo} open onClose={...} />
+)}
+```
+
+**Why `key` and not `useEffect + form.reset()`:** TanStack Form initializes `defaultValues` on mount. Calling `form.reset()` in a `useEffect` runs after the first paint and clears then reapplies values, causing a visible flash of empty fields. The `key` approach remounts the component cleanly so `useForm` gets the correct values from the start.
+
 ### Error Handling
 
 - TanStack Query `error` state for async errors — display in UI, not console
