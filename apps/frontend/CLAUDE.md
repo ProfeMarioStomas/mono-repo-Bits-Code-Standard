@@ -213,6 +213,13 @@ Usage rules:
 - Prefer composition over configuration — use children and render props over boolean flags
 - Co-locate feature components with their page, not in a global components folder
 
+### Page vs Modal responsibility
+
+- **Pages show data** — tables, reports, dashboards, read-only views
+- **Modals contain forms** — create, edit, and delete confirmations are ALWAYS in a modal, never on a separate page
+- Every CRUD feature follows this pattern: page renders the table + action buttons → button opens a modal → modal contains the TanStack Form → on submit, modal closes and the query is invalidated
+- Delete actions use a confirmation modal (never a browser `confirm()` or inline action without confirmation)
+
 ### Error Handling
 
 - TanStack Query `error` state for async errors — display in UI, not console
