@@ -113,6 +113,7 @@ export const config = schema.parse(env);
 - Fail fast at startup if required env vars are missing — never silently fall back
 - Boolean flags: `FEATURE_X_ENABLED=true` — parse as strings, convert explicitly
 - Variable naming: `SCREAMING_SNAKE_CASE`, prefixed by owning service for cross-service vars
+- `getConfig(env)` accepts `Record<string, unknown>` — **do not change this to `Record<string, string>`**. The `Bindings` type includes `BUCKET: R2Bucket` (a non-string service binding), so a narrower type causes a TypeScript error. Zod's `safeParse` handles `unknown` correctly.
 
 ### Zod v4 Schemas (models/)
 
@@ -227,6 +228,31 @@ app.get("/api/docs", swaggerUI({ url: "/api/docs/spec" }));
 - Always invalidate on mutations (create, update, delete)
 - Always use TTL — never cache indefinitely
 
+### CORS
+
+CORS middleware is registered in `src/index.ts` **before all other middleware**, including auth. This ensures preflight `OPTIONS` requests are handled without hitting the auth check.
+
+```typescript
+import { cors } from "hono/cors";
+
+const ALLOWED_ORIGINS = ["http://localhost:5173"]; // add deployed frontend URL here
+
+app.use("*", cors({
+  origin: (origin) => (ALLOWED_ORIGINS.includes(origin) ? origin : null),
+  allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowHeaders: ["Content-Type", "X-Correlation-Id"],
+  exposeHeaders: ["X-Correlation-Id"],
+  credentials: true, // required — auth uses httpOnly cookies
+  maxAge: 600,
+}));
+```
+
+Rules:
+- `credentials: true` is mandatory — without it the browser will not send cookies cross-origin
+- Never use `origin: "*"` with `credentials: true` — browsers block it; always specify exact origins
+- Add the deployed frontend URL to `ALLOWED_ORIGINS` before each production deploy
+- The origin function returns `null` (not `"*"`) for disallowed origins — Hono treats `null` as a CORS rejection
+
 ### Cloudflare Workers Constraints
 
 - No Node.js APIs — use Web Standard APIs only (fetch, crypto, Request, Response)
@@ -278,10 +304,49 @@ on application errors.
 ### Database Patterns
 
 - All SQL uses Drizzle ORM — never raw string interpolation
-- Any operation writing to 2+ tables must use a transaction
-- Services coordinate transactions; repositories accept a connection/transaction parameter
 - N+1 prevention: when fetching a list with related data, always batch — never fetch per item
 - Never return raw DB errors to the client — map all DB errors to domain errors in repositories
+
+#### Multi-table writes — NEVER use `db.transaction()`
+
+The `neon-http` driver **does not support transactions** — calling `db.transaction()` throws
+`Error: No transactions support in neon-http driver` at runtime, which surfaces as `INTERNAL_SERVER_ERROR`.
+
+Use `db.batch()` instead. Neon executes a batch in a single HTTP round-trip inside an implicit
+transaction, giving the same atomicity guarantee:
+
+```typescript
+// ✅ Correct — atomic multi-table write with db.batch()
+await db.batch([
+  db.insert(receipts).values({ ... }).returning(),
+  ...items.map((item) =>
+    db.update(products)
+      .set({ stock: sql`${products.stock} + ${item.quantity}` })
+      .where(eq(products.id, item.productId)),
+  ),
+] as const);
+
+// ❌ Wrong — throws at runtime with neon-http
+await db.transaction(async (tx) => {
+  await tx.insert(receipts).values({ ... });
+  await tx.update(products).set({ ... });
+});
+```
+
+**Pattern for operations where writes depend on a prior insert's returned ID:**
+
+```typescript
+// 1. Insert the parent record to get its ID
+const [parentRow] = await db.insert(parent).values({ ... }).returning();
+
+// 2. Batch the child inserts + any side-effect updates
+await db.batch([
+  db.insert(children).values(items.map((i) => ({ parentId: parentRow!.id, ...i }))),
+  ...items.map((i) => db.update(other).set({ ... }).where(...)),
+] as const);
+```
+
+**Reads before writes:** use `Promise.all` for parallel validation selects — they don't need to be in the batch.
 
 ### Observability
 
@@ -377,7 +442,11 @@ app.use("/api/v1/protected/*", authMiddleware);
 - Auth middleware applied at router level — never per-route
 - Secrets (`JWT_SECRET`) in `wrangler.toml` secrets — accessed only via `config/index.ts`
 - Never log tokens, refresh tokens, or password hashes
-- Token cookies: `httpOnly: true`, `secure: true` (production), `sameSite: Strict`
+- Token cookies: `httpOnly: true`, `secure: true` (production)
+- **`sameSite` strategy**: `None` in production (required for cross-origin frontends — e.g. a deployed SPA on a different domain), `Lax` in development. `SameSite=Strict` breaks cookie delivery in any cross-origin setup even with `withCredentials: true`. `SameSite=None` requires `Secure=true` — never set one without the other.
+  ```typescript
+  const sameSite = isProduction ? "None" : "Lax";
+  ```
 
 ### Migrations (Drizzle)
 
