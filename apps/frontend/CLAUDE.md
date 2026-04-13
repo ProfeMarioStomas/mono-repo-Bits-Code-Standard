@@ -399,6 +399,37 @@ Usage rules:
 - Prefer composition over configuration — use children and render props over boolean flags
 - Co-locate feature components with their page, not in a global components folder
 
+### Selects backed by a service — ALWAYS use a combobox
+
+Any dropdown whose options come from an API call (products, users, suppliers, etc.) **must** be an autocomplete combobox, never a plain `<select>`. A static `<select>` is only acceptable for a fixed, small enum (e.g. payment method, status filter).
+
+Use `ProductCombobox` (`src/components/common/ProductCombobox.tsx`) as the reference implementation. When a new entity type needs a combobox, follow the same pattern:
+
+```tsx
+// ✅ Correct — options from API → combobox
+<ProductCombobox
+  products={products}
+  value={subField.state.value}
+  onChange={subField.handleChange}
+  onBlur={subField.handleBlur}
+  label={i === 0 ? "Product" : undefined}
+  error={subField.state.meta.errors[0]?.message}
+/>
+
+// ❌ Wrong — options from API → plain select
+<select onChange={(e) => subField.handleChange(e.target.value)}>
+  {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+</select>
+```
+
+Combobox requirements:
+- Filter client-side on the already-loaded list (no extra API calls per keystroke)
+- Search by name AND any natural identifier (barcode, code, email, etc.)
+- Show at most 10 results at a time
+- Support keyboard navigation: `↑↓` to move, `Enter` to select, `Escape` to close
+- Display a "No results found" state when the query matches nothing
+- Accept an optional `onSelect` callback for side effects (e.g. auto-filling a price field)
+
 ### Page vs Modal responsibility
 
 - **Pages show data** — tables, reports, dashboards, read-only views
